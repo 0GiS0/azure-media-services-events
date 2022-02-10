@@ -5,44 +5,42 @@ using Microsoft.Azure.EventGrid.Models;
 using Microsoft.Azure.WebJobs.Extensions.EventGrid;
 using Microsoft.Extensions.Logging;
 using Microsoft.Azure.WebJobs.Extensions.SignalRService;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Azure.Management.Media;
 using System.Threading.Tasks;
 using Microsoft.Azure.Management.Media.Models;
-using Microsoft.Rest;
-using Microsoft.IdentityModel.Clients.ActiveDirectory;
-using Microsoft.Rest.Azure.Authentication;
 using Newtonsoft.Json;
 
 namespace Company.Function
 {
     public class ProcessingEvents
     {
-        static IAzureMediaServicesClient client = null;
-        static string ResourceGroup, AccountName, ClientId, ClientSecret, TenantId, SubscriptionId = "";
+        IAzureMediaServicesClient _client = null;
+        MediaSettings _config = null;
+
+        const string _UpdateClientFunction = "UpdateProgress";
+        const string _RefreshClientFunction = "Refresh";
+
+        public ProcessingEvents(IAzureMediaServicesClient client, MediaSettings config)
+        {
+            _client = client;
+            _config = config;
+        }
 
 
         [FunctionName("ProcessingEvents")]
-        public async Task Run([EventGridTrigger] EventGridEvent eventGridEvent, ILogger log, [SignalR(HubName = "ams")] IAsyncCollector<SignalRMessage> signalRMessages, ExecutionContext context)
+        public async Task Run([EventGridTrigger] EventGridEvent eventGridEvent, ILogger log, [SignalR(HubName = "ams")] IAsyncCollector<SignalRMessage> signalRMessages)
         {
             log.LogInformation("**************************************************************");
             log.LogInformation(eventGridEvent.EventType);
             log.LogInformation("**************************************************************");
             log.LogInformation(eventGridEvent.Data.ToString());
 
-            // await signalRMessages.AddAsync(new SignalRMessage
-            // {
-            //     Target = "UpdateProgress",
-            //     Arguments = new[] { eventGridEvent.Data.ToString() }
-            // });
-
 
             dynamic data = JsonConvert.DeserializeObject(eventGridEvent.Data.ToString());
 
 
             if (eventGridEvent.EventType == "Microsoft.Media.JobOutputProgress")
-            {
-                log.LogDebug("Processing job output asset event");
+            {                
 
                 string assetName = data.jobCorrelationData.assetName;
 
@@ -52,30 +50,23 @@ namespace Company.Function
                 video.Name = assetName;
                 video.State = "Processing";
 
-                string progress = data.progress;
-                log.LogInformation($"Progress: {progress}");
+                string progress = data.progress;                
 
                 log.LogInformation("Send SignalR message...");
 
                 //Populate video object                  
                 video.Progress = int.Parse(progress);
 
-                log.LogInformation("video asset: " + video.Name);
-                log.LogInformation("video progress: " + video.Progress);
-
                 await signalRMessages.AddAsync(new SignalRMessage
                 {
-                    Target = "UpdateProgress",
+                    Target = _UpdateClientFunction,
                     Arguments = new[] { JsonConvert.SerializeObject(video) }
                 });
             }
             else if (eventGridEvent.EventType == "Microsoft.Media.JobStateChange")
             {
                 string assetName = data.correlationData.assetName;
-                string state = data.state;
-
-                log.LogInformation($"Asset name: {assetName}");
-                log.LogInformation($"State: {state}");
+                string state = data.state;   
 
                 var video = new Video();
                 video.Name = assetName;
@@ -83,7 +74,7 @@ namespace Company.Function
 
                 await signalRMessages.AddAsync(new SignalRMessage
                 {
-                    Target = "UpdateProgress",
+                    Target = _UpdateClientFunction,
                     Arguments = new[] { JsonConvert.SerializeObject(video) }
                 });
 
@@ -93,30 +84,13 @@ namespace Company.Function
                 string assetName = data.correlationData.assetName;
 
 
-                var config = new ConfigurationBuilder()
-                                    .SetBasePath(context.FunctionAppDirectory)
-                                    .AddJsonFile("local.settings.json", optional: true, reloadOnChange: true)
-                                    .AddEnvironmentVariables()
-                                    .Build();
-
-                ResourceGroup = config["AMS:ResourceGroup"];
-                AccountName = config["AMS:AccountName"];
-                ClientId = config["AMS:ClientId"];
-                ClientSecret = config["AMS:ClientSecret"];
-                TenantId = config["AMS:TenantId"];
-                SubscriptionId = config["AMS:SubscriptionId"];
-
-                client = await CreateMediaServicesClientAsync(config);
-
-
                 log.LogInformation("Job finished");
                 log.LogInformation($"Create a streaming locator for {assetName}");
 
-                //Lets create a streaming locator
-
-                StreamingLocator locator = await client.StreamingLocators.CreateAsync(
-                    ResourceGroup,
-                    AccountName,
+                //Let's create a streaming locator
+                var locator = await _client.StreamingLocators.CreateAsync(
+                    _config.ResourceGroup,
+                    _config.AccountName,
                     assetName,
                     new StreamingLocator()
                     {
@@ -127,28 +101,10 @@ namespace Company.Function
                 //Send a message via SignalR to refresh
                 await signalRMessages.AddAsync(new SignalRMessage
                 {
-                    Target = "Refresh",
+                    Target = _RefreshClientFunction,
                     Arguments = new object[] { }
                 });
             }
         }
-
-        private static async Task<ServiceClientCredentials> GetCredentialsAsync(IConfiguration config)
-        {
-            ClientCredential clientCredential = new ClientCredential(ClientId, ClientSecret);
-
-            return await ApplicationTokenProvider.LoginSilentAsync(TenantId, clientCredential, ActiveDirectoryServiceSettings.Azure);
-        }
-
-        private static async Task<IAzureMediaServicesClient> CreateMediaServicesClientAsync(IConfiguration config)
-        {
-            var credentials = await GetCredentialsAsync(config);
-
-            return new AzureMediaServicesClient(credentials)
-            {
-                SubscriptionId = SubscriptionId,
-            };
-        }
-
     }
 }
