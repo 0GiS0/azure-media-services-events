@@ -9,6 +9,7 @@ using Microsoft.Azure.Management.Media;
 using System.Threading.Tasks;
 using Microsoft.Azure.Management.Media.Models;
 using Newtonsoft.Json;
+using Microsoft.Extensions.Options;
 
 namespace Company.Function
 {
@@ -20,10 +21,10 @@ namespace Company.Function
         const string _UpdateClientFunction = "UpdateProgress";
         const string _RefreshClientFunction = "Refresh";
 
-        public ProcessingEvents(IAzureMediaServicesClient client, MediaSettings config)
+        public ProcessingEvents(IAzureMediaServicesClient client, IOptions<MediaSettings> config)
         {
             _client = client;
-            _config = config;
+            _config = config.Value;
         }
 
 

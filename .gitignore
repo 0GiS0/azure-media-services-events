@@ -263,4 +263,9 @@ paket-files/
 __pycache__/
 *.pyc
 
-.vscode
+.vscode/extensions.json
+.gitignore
+.vscode/launch.json
+.vscode/tasks.json
+.gitignore
+.vscode/settings.json
